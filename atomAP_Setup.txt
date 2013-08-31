@@ -1,0 +1,198 @@
+ATOM AP
+Intended Use & packages required
+Setup Acer Aspire One laptop to provide a wifi connection to a LAN providing internet connectivity and local file sharing during SMLUG meetings. To setup and configure the AP, hostapd is used. For name resolution dnsmasq handles the job. I had previously created an AP on a Dell Inspiron 2200 laptop using hostapd and BIND. Although it works fine, dnsmasq is much simpler to configure if you don't need all the features included with BIND. Once a client machine has connected and redirected to the login page a PHP script writes a new entry into iptables bypassing the redirect and allowing internet access.
+
+Files:
+atomAP				(start-up script)
+
+/etc/hostapd/hostapd.conf	(configuration file for hostapd)
+
+/etc/dnsmasq.conf			(configuration file for dnsmasq)
+
+/srv/http/index.php			(capture client MAC & IP)
+
+/srv/http/process.php		(add rule to iptables to allow client internet access)
+
+/usr/bin/rmtrack			(remove connection tracking)
+
+atomAP
+
+#!/bin/bash 
+#Initial wifi interface configuration 
+ip link set dev $1 up 
+ip -f inet addr add dev $1 local 172.20.1.1/24 
+sleep 2 
+
+#Enable IP forwarding 
+sysctl -w net.ipv4.ip_forward=1 
+ 
+#Start dnsmasq 
+if [ -z "$(ps -e | grep dnsmasq)" ] 
+then 
+systemctl start dnsmasq 
+fi 
+ 
+#Enable NAT 
+iptables -F 
+iptables -t nat -F 
+iptables --delete-chain 
+iptables -t nat --delete-chain 
+iptables -t nat -A POSTROUTING -o $2 -j MASQUERADE 
+iptables -A FORWARD -i $1 -j ACCEPT 
+iptables -t mangle -N internet 
+iptables -t mangle -A PREROUTING -i $1 -p tcp -m tcp --dport 80 -j internet 
+iptables -t mangle -A internet -j MARK --set-mark 99 
+iptables -t nat -A PREROUTING -i $1 -p tcp -m mark --mark 99 -m tcp --dport 80 -j DNAT --to-destination 172.20.1.1 
+
+#iptables -t nat -A PREROUTING -s 172.20.1.0/255.255.255.0 -p tcp -j DNAT --to-destination 172.20.1.1 
+ 
+
+ 
+#start hostapd 
+hostapd /etc/hostapd/hostapd.conf 
+killall dnsmasq
+
+dnsmasq.conf
+
+no-resolv 
+server=8.8.8.8 
+server=8.8.4.4 
+interface=wlp3s0 
+dhcp-range=172.20.1.50,172.20.1.150,12h 
+dhcp-lease-max=25
+
+/etc/hostapd/hostapd.conf
+
+interface=wlp3s0 
+driver=nl80211 
+logger_syslog=-1 
+logger_syslog_level=2 
+logger_stdout=-1 
+logger_stdout_level=2 
+dump_file=/tmp/hostapd.dump 
+ctrl_interface=/var/run/hostapd 
+ctrl_interface_group=0 
+ssid=atom.ap 
+hw_mode=g 
+channel=1 
+beacon_int=100 
+dtim_period=2 
+max_num_sta=25 
+rts_threshold=2347 
+fragm_threshold=2346 
+macaddr_acl=0 
+auth_algs=1 
+ignore_broadcast_ssid=0 
+wmm_enabled=1 
+eapol_key_index_workaround=0 
+eap_server=0 
+own_ip_addr=127.0.0.1 
+wpa=3 
+wpa_passphrase=smlug837 
+wpa_key_mgmt=WPA-PSK 
+wpa_pairwise=TKIP CCMP 
+
+index.php
+
+<html> 
+<head> 
+</head> 
+<body> 
+<?php 
+// capture their IP address 
+$ip = $_SERVER['REMOTE_ADDR']; 
+
+// this is the path to the arp command used to get user MAC address 
+// from it's IP address in linux environment. 
+$arp = "/usr/sbin/arp"; 
+
+// execute the arp command to get their mac address 
+$mac = shell_exec("sudo $arp -an " . $ip); 
+preg_match('/..:..:..:..:..:../',$mac , $matches); 
+$mac = @$matches[0]; 
+
+// if MAC Address couldn't be identified. 
+if( $mac === NULL) { 
+  echo "Access Denied."; 
+  exit; 
+} 
+?> 
+<h2>SMLUG Portal</h2> 
+<p>Click OK and everything will be ok.</p> 
+<form method="post" action="process.php"> 
+  <input type="hidden" name="mac" value="<?php echo $mac; ?>" /> 
+  <input type="hidden" name="ip" value="<?php echo $ip; ?>" /> 
+  <input type="submit" value="OK" style="padding:10px 15px;" /> 
+</form> 
+</body> 
+</html>
+
+process.php
+
+<?php 
+if( isset( $_POST['ip'] ) && isset ( $_POST['mac'] ) ) { 
+   $ip = $_POST['ip']; 
+   $mac = $_POST['mac']; 
+   exec("sudo iptables -t mangle -I internet 1 -m mac --mac-source $mac -j RETURN"); 
+   exec("sudo rmtrack " . $ip); 
+   sleep(1); // allowing rmtrack to be executed 
+   
+   // OK, redirection bypassed. 
+   // Show the logged in message or directly redirect to other website 
+
+   echo "User logged in."; 
+   exit; 
+
+} else { 
+   echo "Access Denied"; 
+   exit; 
+} 
+?> 
+
+rmtrack
+
+/usr/sbin/conntrack -L \ 
+    |grep $1 \ 
+    |grep ESTAB \ 
+    |grep 'dport=80' \ 
+    |awk \ 
+        "{ system(\"conntrack -D --orig-src $1 --orig-dst \" \ 
+            substr(\$6,5) \" -p tcp --orig-port-src \" substr(\$7,7) \" \ 
+            --orig-port-dst 80\"); }"
+
+Changes needed to use USB wireless for outside network:
+The wireless interface is identified as wlp0s29f7u1. The atomAP script needs to be updated to reflect this. Other files needing to be modified are...
+References:
+http://nims11.wordpress.com/2012/04/27/hostapd-the-linux-way-to-create-virtual-wifi-access-point/
+
+http://nims11.wordpress.com/2013/05/22/using-hostapd-with-dnsmasq-to-create-virtual-wifi-access-point-in-linux/
+
+http://www.thekelleys.org.uk/dnsmasq/docs/FAQ
+
+http://aryo.info/labs/captive-portal-using-php-and-iptables.html
+
+Q: Names on the internet are working fine, but looking up local names 
+   from /etc/hosts or DHCP doesn't seem to work.
+
+A: Resolver code sometime does strange things when given names without
+   any dots in the name. Win2k and WinXP may not use the DNS at all and just
+   try and look up the name using WINS. On UNIX look at "options ndots:"
+   in "man resolv.conf" for details on this topic. Testing lookups
+   using "nslookup" or "dig" will work, but then attempting to run
+   "ping" will get a lookup failure, appending a dot to the end of the
+   hostname  will fix things. (ie "ping myhost" fails, but "ping
+   myhost." works. The solution is to make sure that all your hosts
+   have a domain set ("domain" in resolv.conf, or set a domain in 
+   your DHCP server, see below for Windows XP and Mac OS X). 
+   Any domain  will do, but "localnet" is traditional. Now when you
+   resolve "myhost" the resolver will attempt to look up 
+   "myhost.localnet" so you need to have dnsmasq reply to that name. 
+   The way to do that is to include the domain in each name on
+   /etc/hosts  and/or to use the --expand-hosts and --domain options.
+grep -v '^$\|^#' testfile.txt
+The -v switch tells grep to skip or don't print the lines that match the following regex.
+The caret symbol ^ means the beginning of the line and the dollar sign $ means the end of the line.  So this regular expressions means match all lines that have nothing on them since ^ is the beginning of the line and $ is the end of the line and there is nothing in between them.
+We can also use this to remove the comments.  Using the ^# regex we can tell grep to skip or not print the lines starting with a #.  Remember caret ^ is the beginning of a line, so ^# means match any lines starting with a pound sign.
+Code	Nimbus Mono L
+Text	DejaVu Sans
+Notes	DejaVu Sans Mono
