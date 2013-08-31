@@ -1,8 +1,10 @@
 #!/bin/bash
-#Initial wifi interface configuration
+#Initial network interface configuration
+ip link set dev $2 up
+dhcpcd $2
 ip link set dev $1 up
 ip -f inet addr add dev $1 local 172.20.1.1/24
-sleep 2
+sleep 2		# not sure if this can be lowered to (1) or removed?
 
 #Enable IP forwarding
 sysctl -w net.ipv4.ip_forward=1

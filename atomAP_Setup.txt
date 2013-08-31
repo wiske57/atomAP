@@ -5,15 +5,15 @@ Setup Acer Aspire One laptop to provide a wifi connection to a LAN providing int
 Files:
 atomAP				(start-up script)
 
+/etc/dnsmasq.conf		(configuration file for dnsmasq)
+
 /etc/hostapd/hostapd.conf	(configuration file for hostapd)
 
-/etc/dnsmasq.conf			(configuration file for dnsmasq)
-
-/srv/http/index.php			(capture client MAC & IP)
+/srv/http/index.php		(capture client MAC & IP)
 
 /srv/http/process.php		(add rule to iptables to allow client internet access)
 
-/usr/bin/rmtrack			(remove connection tracking)
+/usr/bin/rmtrack		(remove connection tracking)
 
 atomAP
 
