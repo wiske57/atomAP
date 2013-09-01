@@ -1,9 +1,11 @@
 #!/bin/bash
 #Initial network interface configuration
 ip link set dev $2 up
-dhcpcd $2
+ip -f inet addr add dev $2 192.168.1.103/24
+
 ip link set dev $1 up
-ip -f inet addr add dev $1 local 172.20.1.1/24
+ip -f inet addr add local 172.20.1.1/24 dev $1
+ip route add default via 192.168.1.1
 sleep 2		# not sure if this can be lowered to (1) or removed?
 
 #Enable IP forwarding
@@ -18,8 +20,12 @@ fi
 #Enable NAT
 iptables -F
 iptables -t nat -F
-iptables --delete-chain
-iptables -t nat --delete-chain
+iptables -X
+iptables -t nat -X
+iptables -A FORWARD -i $2
+iptables -A FORWARD -o $2
+iptables -A INPUT -i $2
+iptables -A OUTPUT -o $2
 iptables -t nat -A POSTROUTING -o $2 -j MASQUERADE
 iptables -A FORWARD -i $1 -j ACCEPT
 iptables -t mangle -N internet
